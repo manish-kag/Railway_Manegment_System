@@ -7,7 +7,7 @@
 #include <memory>
 #include <chrono>
 #include <sstream>
-#include <algorithm> // Added for std::find_if, but will replace with loop for compatibility
+#include <algorithm>
 
 // This header file must be in the same folder as your .cpp file.
 #include "sqlite3.h"
@@ -27,6 +27,7 @@ public:
         return instance;
     }
 
+    // Executes non-query SQL (INSERT, UPDATE, DELETE, CREATE)
     bool executeUpdate(const std::string& sql) {
         char* zErrMsg = nullptr;
         int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &zErrMsg);
@@ -38,6 +39,7 @@ public:
         return true;
     }
 
+    // Executes a SELECT query and returns the results
     std::vector<std::vector<std::string>> executeQuery(const std::string& sql) {
         std::vector<std::vector<std::string>> results;
         char* zErrMsg = nullptr;
@@ -48,6 +50,11 @@ public:
         }
         return results;
     }
+
+    // Transaction management
+    bool beginTransaction() { return executeUpdate("BEGIN IMMEDIATE TRANSACTION;"); }
+    bool commit() { return executeUpdate("COMMIT;"); }
+    bool rollback() { return executeUpdate("ROLLBACK;"); }
 
 private:
     DatabaseManager() {
@@ -73,30 +80,29 @@ private:
             "password TEXT NOT NULL);"
         );
 
-        // Stores static train information
         executeUpdate(
             "CREATE TABLE IF NOT EXISTS trains ("
             "train_number TEXT PRIMARY KEY NOT NULL,"
             "train_name TEXT NOT NULL,"
             "source TEXT NOT NULL,"
             "destination TEXT NOT NULL,"
-            "departure_time TEXT NOT NULL," // "HH:MM"
-            "journey_duration TEXT NOT NULL," // "HH:MM" format for total travel time
+            "departure_time TEXT NOT NULL,"
+            "journey_duration TEXT NOT NULL,"
             "total_ac_seats INTEGER NOT NULL,"
             "total_sleeper_seats INTEGER NOT NULL,"
             "ac_fare REAL NOT NULL,"
             "sleeper_fare REAL NOT NULL);"
         );
 
-        // Stores a specific run of a train on a specific date
         executeUpdate(
             "CREATE TABLE IF NOT EXISTS schedules ("
             "schedule_id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "train_number TEXT NOT NULL,"
-            "departure_date TEXT NOT NULL," // "YYYY-MM-DD"
+            "departure_date TEXT NOT NULL,"
             "ac_seats_available INTEGER NOT NULL,"
             "sleeper_seats_available INTEGER NOT NULL,"
-            "FOREIGN KEY(train_number) REFERENCES trains(train_number));"
+            "FOREIGN KEY(train_number) REFERENCES trains(train_number),"
+            "UNIQUE(train_number, departure_date));" // Prevent duplicate schedules
         );
         
         executeUpdate(
@@ -113,7 +119,6 @@ private:
 
         if (executeQuery("SELECT * FROM users WHERE username='admin';").empty()) {
             executeUpdate("INSERT INTO users (username, password) VALUES ('admin', 'admin123');");
-            std::cout << "Default admin user created: admin / admin123" << std::endl;
         }
     }
 
@@ -134,7 +139,6 @@ private:
 //  Date/Time Utility Functions
 // ===================================================================
 namespace TimeUtil {
-    // Calculates arrival date and time string based on departure and duration
     std::string calculateArrival(const std::string& departureDate, const std::string& departureTime, const std::string& duration) {
         std::tm start_tm = {};
         std::stringstream ss_date(departureDate + " " + departureTime);
@@ -157,40 +161,45 @@ namespace TimeUtil {
     }
 }
 
-
 // ===================================================================
 //  Train Class
 // ===================================================================
 class Train {
 public:
     std::string number, name, source, destination, departureTime, journeyDuration;
-    int totalAcSeats, totalSleeperSeats;
-    double acFare, sleeperFare;
 
+    // ============================ FORMATTING FIX START ============================
     void displayAsHeader() const {
-         std::cout << std::left 
-                   << std::setw(12) << "Train No." 
-                   << std::setw(25) << "Train Name"
-                   << std::setw(20) << "Source" 
-                   << std::setw(20) << "Destination"
-                   << std::setw(15) << "Departure"
-                   << std::setw(15) << "Duration"
-                   << std::endl;
-        std::cout << std::string(107, '-') << std::endl;
+        const int W_NUM = 10, W_NAME = 45, W_SRC = 25, W_DEST = 25, W_DEP = 11, W_DUR = 10;
+        std::cout << std::string(W_NUM + W_NAME + W_SRC + W_DEST + W_DEP + W_DUR + 19, '-') << std::endl;
+        std::cout << "| " << std::left << std::setw(W_NUM) << "Train No."
+                  << "| " << std::setw(W_NAME) << "Train Name"
+                  << "| " << std::setw(W_SRC) << "Source"
+                  << "| " << std::setw(W_DEST) << "Destination"
+                  << "| " << std::setw(W_DEP) << "Departure"
+                  << "| " << std::setw(W_DUR) << "Duration" << " |" << std::endl;
+        std::cout << std::string(W_NUM + W_NAME + W_SRC + W_DEST + W_DEP + W_DUR + 19, '-') << std::endl;
     }
 
     void displayAsRow() const {
-        std::cout << std::left 
-                  << std::setw(12) << number 
-                  << std::setw(25) << name
-                  << std::setw(20) << source 
-                  << std::setw(20) << destination
-                  << std::setw(15) << departureTime
-                  << std::setw(15) << journeyDuration
-                  << std::endl;
-    }
-};
+        const int W_NUM = 10, W_NAME = 45, W_SRC = 25, W_DEST = 25, W_DEP = 11, W_DUR = 10;
 
+        auto truncate = [](const std::string& str, int width) {
+            if (str.length() > width) {
+                return str.substr(0, width - 1) + "."; // Truncate and add a '.'
+            }
+            return str;
+        };
+
+        std::cout << "| " << std::left << std::setw(W_NUM) << truncate(number, W_NUM)
+                  << "| " << std::setw(W_NAME) << truncate(name, W_NAME)
+                  << "| " << std::setw(W_SRC) << truncate(source, W_SRC)
+                  << "| " << std::setw(W_DEST) << truncate(destination, W_DEST)
+                  << "| " << std::setw(W_DEP) << truncate(departureTime, W_DEP)
+                  << "| " << std::setw(W_DUR) << truncate(journeyDuration, W_DUR) << " |" << std::endl;
+    }
+    // ============================ FORMATTING FIX END ============================
+};
 
 // ===================================================================
 //  RailwaySystem Class
@@ -232,7 +241,7 @@ private:
         do {
             clearScreen();
             std::cout << "========================================\n";
-            std::cout << "   Railway Reservation System (Advanced)\n";
+            std::cout << "   Railway Reservation System\n";
             std::cout << "========================================\n";
             std::cout << "1. User Login\n";
             std::cout << "2. User Signup\n";
@@ -268,7 +277,7 @@ private:
             switch (choice) {
                 case 1: addTrain(); break;
                 case 2: scheduleTrain(); break;
-                case 3: viewAllTrains(); break;
+                case 3: viewAllTrains(true); break; // true to pause
                 case 4: deleteTrain(); break;
                 case 5: viewAllBookingsAdmin(); break;
                 case 6: std::cout << "Logging out...\n"; break;
@@ -303,13 +312,27 @@ private:
     void handleUserSignup() {
         std::string username, password;
         std::cout << "--- User Signup ---\n";
-        std::cout << "Enter username: "; std::cin >> username;
-        std::cout << "Enter password: "; std::cin >> password;
+        std::cout << "Enter username: "; 
+        std::cin >> username;
+
+        std::string checkSql = "SELECT 1 FROM users WHERE username='" + username + "';";
+        if (!DatabaseManager::getInstance().executeQuery(checkSql).empty()) {
+            std::cout << "Username already exists. Please choose a different one.\n";
+            pressEnterToContinue();
+            return;
+        }
+
+        std::cout << "Enter password: "; 
+        std::cin >> password;
         std::string sql = "INSERT INTO users (username, password) VALUES ('" + username + "', '" + password + "');";
-        if (DatabaseManager::getInstance().executeUpdate(sql)) std::cout << "Signup successful!\n";
-        else std::cout << "Username already exists.\n";
+        if (DatabaseManager::getInstance().executeUpdate(sql)) {
+            std::cout << "Signup successful! You can now log in.\n";
+        } else {
+            std::cout << "An unexpected error occurred during signup.\n";
+        }
         pressEnterToContinue();
     }
+
 
     void handleUserLogin() {
         std::string username, password;
@@ -354,21 +377,24 @@ private:
         std::cout << "Enter Destination: "; std::getline(std::cin, t.destination);
         std::cout << "Enter Departure Time (HH:MM): "; std::cin >> t.departureTime;
         std::cout << "Enter Journey Duration (HH:MM): "; std::cin >> t.journeyDuration;
-        std::cout << "Enter Total AC Seats: "; std::cin >> t.totalAcSeats;
-        std::cout << "Enter AC Fare: "; std::cin >> t.acFare;
-        std::cout << "Enter Total Sleeper Seats: "; std::cin >> t.totalSleeperSeats;
-        std::cout << "Enter Sleeper Fare: "; std::cin >> t.sleeperFare;
+        
+        int totalAcSeats, totalSleeperSeats;
+        double acFare, sleeperFare;
+        std::cout << "Enter Total AC Seats: "; std::cin >> totalAcSeats;
+        std::cout << "Enter AC Fare: "; std::cin >> acFare;
+        std::cout << "Enter Total Sleeper Seats: "; std::cin >> totalSleeperSeats;
+        std::cout << "Enter Sleeper Fare: "; std::cin >> sleeperFare;
 
-        std::string sql = "INSERT INTO trains VALUES ('" + t.number + "', '" + t.name + "', '" + t.source + "', '" + t.destination + "', '" + t.departureTime + "', '" + t.journeyDuration + "', " + std::to_string(t.totalAcSeats) + ", " + std::to_string(t.totalSleeperSeats) + ", " + std::to_string(t.acFare) + ", " + std::to_string(t.sleeperFare) + ");";
+        std::string sql = "INSERT INTO trains VALUES ('" + t.number + "', '" + t.name + "', '" + t.source + "', '" + t.destination + "', '" + t.departureTime + "', '" + t.journeyDuration + "', " + std::to_string(totalAcSeats) + ", " + std::to_string(totalSleeperSeats) + ", " + std::to_string(acFare) + ", " + std::to_string(sleeperFare) + ");";
         
         if (DatabaseManager::getInstance().executeUpdate(sql)) std::cout << "Train route added successfully!\n";
-        else std::cout << "Failed to add train route.\n";
+        else std::cout << "Failed to add train route (Train Number might already exist).\n";
         pressEnterToContinue();
     }
 
     void scheduleTrain() {
         std::cout << "--- Schedule a Train for a Date ---\n";
-        viewAllTrains();
+        viewAllTrains(false); // false to not pause
         std::string trainNumber, date;
         std::cout << "\nEnter Train Number to schedule: ";
         std::cin >> trainNumber;
@@ -394,24 +420,27 @@ private:
         pressEnterToContinue();
     }
 
-    void viewAllTrains() {
+    void viewAllTrains(bool pause) {
         std::cout << "--- List of All Train Routes ---\n";
         auto results = DatabaseManager::getInstance().executeQuery("SELECT * FROM trains;");
         if (results.empty()) {
             std::cout << "No train routes found.\n";
         } else {
-            Train().displayAsHeader();
+            Train t_header;
+            t_header.displayAsHeader();
             for (const auto& row : results) {
                 Train t = {row[0], row[1], row[2], row[3], row[4], row[5]};
                 t.displayAsRow();
             }
+            const int W_NUM = 10, W_NAME = 45, W_SRC = 25, W_DEST = 25, W_DEP = 11, W_DUR = 10;
+            std::cout << std::string(W_NUM + W_NAME + W_SRC + W_DEST + W_DEP + W_DUR + 19, '-') << std::endl;
         }
-        pressEnterToContinue();
+        if (pause) pressEnterToContinue();
     }
 
     void deleteTrain() {
         std::cout << "--- Delete Train Route ---\n";
-        viewAllTrains();
+        viewAllTrains(false);
         std::string trainNumber;
         std::cout << "\nEnter Train Number to delete: ";
         std::cin >> trainNumber;
@@ -429,13 +458,31 @@ private:
         if (results.empty()) {
             std::cout << "No bookings found.\n";
         } else {
-             std::cout << std::left << std::setw(15) << "Ticket ID" << std::setw(15) << "Username" << std::setw(25) << "Train Name" << std::setw(15) << "Date" << std::setw(10) << "Class" << std::setw(10) << "Seats" << std::setw(15) << "Fare" << std::endl;
-             std::cout << std::string(105, '-') << std::endl;
+             // ============================ FORMATTING FIX START ============================
+             const int W_TID = 15, W_USER = 15, W_NAME = 30, W_DATE = 12, W_CLASS = 10, W_SEATS = 7, W_FARE = 12;
+             std::cout << std::string(W_TID + W_USER + W_NAME + W_DATE + W_CLASS + W_SEATS + W_FARE + 22, '-') << std::endl;
+             std::cout << "| " << std::left << std::setw(W_TID) << "Ticket ID" << "| " << std::setw(W_USER) << "Username" << "| " << std::setw(W_NAME) << "Train Name" << "| " << std::setw(W_DATE) << "Date" << "| " << std::setw(W_CLASS) << "Class" << "| " << std::setw(W_SEATS) << "Seats" << "| " << std::setw(W_FARE) << "Fare" << " |" << std::endl;
+             std::cout << std::string(W_TID + W_USER + W_NAME + W_DATE + W_CLASS + W_SEATS + W_FARE + 22, '-') << std::endl;
+             
              double totalRevenue = 0.0;
+             auto truncate = [](const std::string& str, int width) {
+                if (str.length() > width) return str.substr(0, width - 1) + ".";
+                return str;
+             };
+
              for (const auto& row : results) {
                 totalRevenue += std::stod(row[6]);
-                std::cout << std::left << std::setw(15) << row[0] << std::setw(15) << row[1] << std::setw(25) << row[2] << std::setw(15) << row[3] << std::setw(10) << row[4] << std::setw(10) << row[5] << std::setw(15) << std::fixed << std::setprecision(2) << std::stod(row[6]) << std::endl;
+                std::cout << "| " << std::left 
+                          << std::setw(W_TID) << truncate(row[0], W_TID) 
+                          << "| " << std::setw(W_USER) << truncate(row[1], W_USER) 
+                          << "| " << std::setw(W_NAME) << truncate(row[2], W_NAME) 
+                          << "| " << std::setw(W_DATE) << row[3] 
+                          << "| " << std::setw(W_CLASS) << row[4] 
+                          << "| " << std::setw(W_SEATS) << row[5] 
+                          << "| " << std::setw(W_FARE) << std::fixed << std::setprecision(2) << std::stod(row[6]) << " |" << std::endl;
              }
+             std::cout << std::string(W_TID + W_USER + W_NAME + W_DATE + W_CLASS + W_SEATS + W_FARE + 22, '-') << std::endl;
+             // ============================ FORMATTING FIX END ============================
              std::cout << "\n--- Total Revenue: " << std::fixed << std::setprecision(2) << totalRevenue << " ---\n";
         }
         pressEnterToContinue();
@@ -445,7 +492,7 @@ private:
     void bookTicket() {
         std::cout << "--- Book a Ticket ---\n";
         
-        std::string sql = "SELECT s.schedule_id, t.train_number, t.train_name, t.source, t.destination, s.departure_date, t.departure_time, t.journey_duration, s.ac_seats_available, s.sleeper_seats_available, t.ac_fare, t.sleeper_fare FROM schedules s JOIN trains t ON s.train_number = t.train_number WHERE s.departure_date >= date('now');";
+        std::string sql = "SELECT s.schedule_id, t.train_name, t.source, t.destination, s.departure_date, s.ac_seats_available, s.sleeper_seats_available, t.ac_fare, t.sleeper_fare, t.train_number FROM schedules s JOIN trains t ON s.train_number = t.train_number WHERE s.departure_date >= date('now');";
         auto results = DatabaseManager::getInstance().executeQuery(sql);
 
         if (results.empty()) {
@@ -454,50 +501,62 @@ private:
             return;
         }
 
+        // ============================ FORMATTING FIX START ============================
         std::cout << "\n--- All Scheduled Journeys ---\n";
-        std::cout << std::left 
-                  << std::setw(5) << "ID" 
-                  << std::setw(25) << "Train Name" 
-                  << std::setw(20) << "Route" 
-                  << std::setw(15) << "Date" 
-                  << std::setw(25) << "AC Seats (Fare)" 
-                  << std::setw(25) << "Sleeper Seats (Fare)" << std::endl;
-        std::cout << std::string(115, '-') << std::endl;
-        for (const auto& row : results) {
-            std::string route = row[3] + " -> " + row[4];
-            std::stringstream ac_info, sleeper_info;
-            ac_info << row[8] << " (Rs " << std::fixed << std::setprecision(2) << std::stod(row[10]) << ")";
-            sleeper_info << row[9] << " (Rs " << std::fixed << std::setprecision(2) << std::stod(row[11]) << ")";
+        const int W_ID = 5, W_NAME = 30, W_ROUTE = 30, W_DATE = 12, W_AC = 25, W_SL = 25;
+        std::cout << std::string(W_ID + W_NAME + W_ROUTE + W_DATE + W_AC + W_SL + 19, '-') << std::endl;
+        std::cout << "| " << std::left 
+                  << std::setw(W_ID) << "ID" << "| " 
+                  << std::setw(W_NAME) << "Train Name" << "| " 
+                  << std::setw(W_ROUTE) << "Route" << "| " 
+                  << std::setw(W_DATE) << "Date" << "| " 
+                  << std::setw(W_AC) << "AC Seats (Fare)" << "| " 
+                  << std::setw(W_SL) << "Sleeper Seats (Fare)" << " |" << std::endl;
+        std::cout << std::string(W_ID + W_NAME + W_ROUTE + W_DATE + W_AC + W_SL + 19, '-') << std::endl;
 
-            std::cout << std::left 
-                      << std::setw(5) << row[0] 
-                      << std::setw(25) << row[2] 
-                      << std::setw(20) << route 
-                      << std::setw(15) << row[5] 
-                      << std::setw(25) << ac_info.str() 
-                      << std::setw(25) << sleeper_info.str() << std::endl;
+        auto truncate = [](const std::string& str, int width) {
+            if (str.length() > width) return str.substr(0, width - 1) + ".";
+            return str;
+        };
+
+        for (const auto& row : results) {
+            std::string route = row[2] + " -> " + row[3];
+            std::stringstream ac_info, sleeper_info;
+            ac_info << row[5] << " (Rs " << std::fixed << std::setprecision(2) << std::stod(row[7]) << ")";
+            sleeper_info << row[6] << " (Rs " << std::fixed << std::setprecision(2) << std::stod(row[8]) << ")";
+
+            std::cout << "| " << std::left 
+                      << std::setw(W_ID) << row[0] 
+                      << "| " << std::setw(W_NAME) << truncate(row[1], W_NAME) 
+                      << "| " << std::setw(W_ROUTE) << truncate(route, W_ROUTE) 
+                      << "| " << std::setw(W_DATE) << row[4]
+                      << "| " << std::setw(W_AC) << ac_info.str() 
+                      << "| " << std::setw(W_SL) << sleeper_info.str() << " |" << std::endl;
         }
+        std::cout << std::string(W_ID + W_NAME + W_ROUTE + W_DATE + W_AC + W_SL + 19, '-') << std::endl;
+        // ============================ FORMATTING FIX END ============================
 
         int scheduleId;
         std::cout << "\nEnter the Schedule ID of the journey you want to book: ";
         std::cin >> scheduleId;
 
-        auto it = results.end();
-        for (auto temp_it = results.begin(); temp_it != results.end(); ++temp_it) {
-            if (std::stoi((*temp_it)[0]) == scheduleId) {
-                it = temp_it;
+        const std::vector<std::string>* selectedTrainData = nullptr;
+        for(const auto& row : results) {
+            if(std::stoi(row[0]) == scheduleId) {
+                selectedTrainData = &row;
                 break;
             }
         }
         
-        if (it == results.end()) {
+        if (!selectedTrainData) {
             std::cout << "Invalid ID.\n"; pressEnterToContinue(); return;
         }
-        const auto& trainData = *it;
-        int acSeatsAvail = std::stoi(trainData[8]);
-        int sleeperSeatsAvail = std::stoi(trainData[9]);
-        double acFare = std::stod(trainData[10]);
-        double sleeperFare = std::stod(trainData[11]);
+        
+        const auto& trainData = *selectedTrainData;
+        int acSeatsAvail = std::stoi(trainData[5]);
+        int sleeperSeatsAvail = std::stoi(trainData[6]);
+        double acFare = std::stod(trainData[7]);
+        double sleeperFare = std::stod(trainData[8]);
 
         std::cout << "\nSelect Class:\n1. AC (Fare: " << acFare << ")\n2. Sleeper (Fare: " << sleeperFare << ")\n";
         int choice;
@@ -519,14 +578,14 @@ private:
         std::cin >> numSeats;
 
         if (numSeats <= 0 || numSeats > availableSeats) {
-            std::cout << "Not enough seats.\n"; pressEnterToContinue(); return;
+            std::cout << "Invalid number of seats or not enough seats available.\n"; pressEnterToContinue(); return;
         }
 
         double totalFare = numSeats * farePerSeat;
         std::string ticketId = generateTicketId();
 
         std::cout << "\n--- Booking Confirmation ---\n";
-        std::cout << "Train: " << trainData[2] << " (" << trainData[1] << ")\n";
+        std::cout << "Train: " << trainData[1] << " (" << trainData[9] << ")\n";
         std::cout << "Class: " << chosenClass << " | Seats: " << numSeats << "\n";
         std::cout << "Total Fare: " << std::fixed << std::setprecision(2) << totalFare << "\n";
         
@@ -535,13 +594,33 @@ private:
         std::cin >> confirm;
 
         if (confirm == 'y' || confirm == 'Y') {
-            std::string bookingSql = "INSERT INTO bookings (ticket_id, username, schedule_id, class, num_seats, total_fare) VALUES ('" + ticketId + "', '" + loggedInUsername + "', " + std::to_string(scheduleId) + ", '" + chosenClass + "', " + std::to_string(numSeats) + ", " + std::to_string(totalFare) + ");";
-            std::string updateSql = "UPDATE schedules SET " + seatColumn + " = " + std::to_string(availableSeats - numSeats) + " WHERE schedule_id=" + std::to_string(scheduleId) + ";";
+            auto& db = DatabaseManager::getInstance();
+            if (!db.beginTransaction()) {
+                std::cout << "Booking failed: Could not start transaction.\n";
+                pressEnterToContinue();
+                return;
+            }
 
-            if (DatabaseManager::getInstance().executeUpdate(bookingSql) && DatabaseManager::getInstance().executeUpdate(updateSql)) {
+            std::string checkSeatsSql = "SELECT " + seatColumn + " FROM schedules WHERE schedule_id=" + std::to_string(scheduleId) + ";";
+            auto currentSeatsResult = db.executeQuery(checkSeatsSql);
+            if (currentSeatsResult.empty() || std::stoi(currentSeatsResult[0][0]) < numSeats) {
+                db.rollback();
+                std::cout << "Booking failed: Seats were taken by another user.\n";
+                pressEnterToContinue();
+                return;
+            }
+            
+            int currentAvailableSeats = std::stoi(currentSeatsResult[0][0]);
+
+            std::string bookingSql = "INSERT INTO bookings (ticket_id, username, schedule_id, class, num_seats, total_fare) VALUES ('" + ticketId + "', '" + loggedInUsername + "', " + std::to_string(scheduleId) + ", '" + chosenClass + "', " + std::to_string(numSeats) + ", " + std::to_string(totalFare) + ");";
+            std::string updateSql = "UPDATE schedules SET " + seatColumn + " = " + std::to_string(currentAvailableSeats - numSeats) + " WHERE schedule_id=" + std::to_string(scheduleId) + ";";
+
+            if (db.executeUpdate(bookingSql) && db.executeUpdate(updateSql)) {
+                db.commit();
                 std::cout << "Booking successful! Your Ticket ID is " << ticketId << "\n";
             } else {
-                std::cout << "Booking failed.\n";
+                db.rollback();
+                std::cout << "Booking failed due to a database error.\n";
             }
         } else {
             std::cout << "Booking cancelled.\n";
@@ -558,15 +637,17 @@ private:
             std::cout << "You have no bookings.\n";
         } else {
             for (const auto& row : results) {
-                std::cout << "\n----------------------------------------\n";
-                std::cout << "Ticket ID: " << row[0] << "\n";
-                std::cout << "Train: " << row[1] << "\n";
-                std::cout << "Route: " << row[2] << " -> " << row[3] << "\n";
-                std::cout << "Departure: " << row[4] << " at " << row[5] << "\n";
-                std::cout << "Arrival: " << TimeUtil::calculateArrival(row[4], row[5], row[6]) << "\n";
-                std::cout << "Class: " << row[7] << " | Seats: " << row[8] << "\n";
-                std::cout << "Total Fare: " << std::fixed << std::setprecision(2) << std::stod(row[9]) << "\n";
+                std::cout << "\n========================================\n";
+                std::cout << "  Ticket ID:      " << row[0] << "\n";
                 std::cout << "----------------------------------------\n";
+                std::cout << "  Train:          " << row[1] << "\n";
+                std::cout << "  Route:          " << row[2] << " -> " << row[3] << "\n";
+                std::cout << "  Departure:      " << row[4] << " at " << row[5] << "\n";
+                std::cout << "  Arrival:        " << TimeUtil::calculateArrival(row[4], row[5], row[6]) << "\n";
+                std::cout << "  Class:          " << row[7] << "\n";
+                std::cout << "  Seats:          " << row[8] << "\n";
+                std::cout << "  Total Fare:     Rs " << std::fixed << std::setprecision(2) << std::stod(row[9]) << "\n";
+                std::cout << "========================================\n";
             }
         }
         pressEnterToContinue();
@@ -578,11 +659,21 @@ private:
         std::cout << "Enter Ticket ID to cancel: ";
         std::cin >> ticketId;
 
+        auto& db = DatabaseManager::getInstance();
+
+        if (!db.beginTransaction()) {
+            std::cout << "Cancellation failed: Could not start transaction.\n";
+            pressEnterToContinue(); return;
+        }
+
         std::string sql = "SELECT schedule_id, class, num_seats FROM bookings WHERE ticket_id='" + ticketId + "' AND username='" + loggedInUsername + "';";
-        auto results = DatabaseManager::getInstance().executeQuery(sql);
+        auto results = db.executeQuery(sql);
 
         if (results.empty()) {
-            std::cout << "Invalid Ticket ID.\n"; pressEnterToContinue(); return;
+            db.rollback();
+            std::cout << "Invalid Ticket ID or you do not own this ticket.\n"; 
+            pressEnterToContinue(); 
+            return;
         }
 
         int scheduleId = std::stoi(results[0][0]);
@@ -593,10 +684,12 @@ private:
         std::string deleteSql = "DELETE FROM bookings WHERE ticket_id='" + ticketId + "';";
         std::string updateSql = "UPDATE schedules SET " + seatColumn + " = " + seatColumn + " + " + std::to_string(numSeats) + " WHERE schedule_id=" + std::to_string(scheduleId) + ";";
 
-        if (DatabaseManager::getInstance().executeUpdate(deleteSql) && DatabaseManager::getInstance().executeUpdate(updateSql)) {
+        if (db.executeUpdate(deleteSql) && db.executeUpdate(updateSql)) {
+            db.commit();
             std::cout << "Ticket cancelled successfully!\n";
         } else {
-            std::cout << "Cancellation failed.\n";
+            db.rollback();
+            std::cout << "Cancellation failed due to a database error.\n";
         }
         pressEnterToContinue();
     }
@@ -610,4 +703,3 @@ int main() {
     app.run();
     return 0;
 }
-
